@@ -24,6 +24,8 @@
 #define EHCI_DEBUG
 //#define EHCI_TRAFFIC_DEBUG
 
+#define PERIODIC_MIN_RATE_UFRAME FRAME2UFRAME(6)
+
 #ifdef EHCI_DEBUG
 #define dprintf(...) printf(__VA_ARGS__)
 #else
@@ -1099,6 +1101,7 @@ ehci_schedule_periodic(struct ehci_host* edev, struct QHn* qhn, int rate_ms)
 {
     uint32_t sched;
     uint32_t *list;
+    int insertions;
 
     /* Create the DMA periodic frame list if required */
     if (edev->flist == NULL) {
@@ -1110,6 +1113,18 @@ ehci_schedule_periodic(struct ehci_host* edev, struct QHn* qhn, int rate_ms)
 
     /* Create the transaction */
     qhn->rate = rate_ms * (1000 / 125);
+    if(qhn->rate < PERIODIC_MIN_RATE_UFRAME){
+        {
+            static int once = 0;
+            if(once == 0){
+                once++;
+                printf("USB: ################################"
+                       "WARN minimum INT rate of %d exceeded with value %d\n",
+                       PERIODIC_MIN_RATE_UFRAME, qhn->rate);
+            }
+        }
+        qhn->rate = PERIODIC_MIN_RATE_UFRAME;
+    }
 
     /* Add it to the int list */
     qhn->next = edev->intn_list;
@@ -1120,22 +1135,37 @@ ehci_schedule_periodic(struct ehci_host* edev, struct QHn* qhn, int rate_ms)
 
     /* Insert the INT into the schedule */
     list = edev->flist;
-    for (sched = 0; sched < FRAME2UFRAME(edev->flist_size); sched += qhn->rate) {
+    insertions = 0;
+    for (sched = 0; sched < FRAME2UFRAME(edev->flist_size);) {
         uint32_t frame = UFRAME2FRAME(sched);
         int offset = FRINDEX_UF(sched);
-        /* TODO Currently only supporting 1 scheduled int */
-        /* If the index is already in use, try the next */
-        while (list[frame] != QHLP_INVALID) {
-            frame++;
-        }
-        /* Add to the list if we can */
-        if (list[frame] == QHLP_INVALID) {
-            list[frame] = QHLP_TYPE_QH | qhn->pqh;
-        }
-        /* TODO uFrame is stored in the QH and we have only one of thes to we ignore the S/C-MASKS */
+        /* TODO Currently only supporting 1 scheduled INT per frame.
+         * If the index is already in use, try the next */
         (void)offset;
+        if(list[frame] == QHLP_INVALID){
+            /* Insert into the schedule */
+            list[frame] = QHLP_TYPE_QH | qhn->pqh;
+            sched += qhn->rate;
+            insertions++;
+        }else{
+            /* Skip to next frame */
+            sched += FRAME2UFRAME(1);
+        }
     }
-    return 0;
+    /* Return whether or not we managed to insert into the schedule */
+    if(insertions == 0){
+        {
+            static int once = 0;
+            if(once == 0){
+                once++;
+                printf("USB: ################################"
+                       "WARN failed to schedule periodic (INT) transfer\n");
+            }
+        }
+        return -1;
+    }else{
+        return 0;
+    }
 }
 
 static enum usb_xact_status
