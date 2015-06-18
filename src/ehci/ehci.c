@@ -24,7 +24,7 @@
 #define EHCI_DEBUG
 //#define EHCI_TRAFFIC_DEBUG
 
-#define PERIODIC_MIN_RATE_UFRAME FRAME2UFRAME(6)
+#define PERIODIC_MIN_RATE_UFRAME FRAME2UFRAME(0)
 
 #ifdef EHCI_DEBUG
 #define dprintf(...) printf(__VA_ARGS__)
